@@ -290,6 +290,24 @@
   </div>
 </div>
 
+<div class="modal" id="toneQ">
+  <div class="sheet">
+    <h2 style="font-size:18.5px; margin:2px 0 6px;">금장 vs 은장, 어느 쪽이 더 잘 어울려요?</h2>
+    <p style="color:var(--sub); font-size:12.5px; line-height:1.6; margin:0 0 16px;">
+      웜/쿨을 가르는 가장 신뢰도 높은 테스트예요. 금(골드)·은(실버) 액세서리를 얼굴 옆에 댔을 때
+      얼굴이 더 화사하고 또렷해지는 쪽을 고르세요.</p>
+    <button class="mode-card" id="goldBtn">
+      <div class="ic">🥇</div><div class="tx"><h3>골드(금)가 잘 어울려요</h3>
+      <p>웜 계열 — 봄 또는 가을</p></div></button>
+    <button class="mode-card" id="silverBtn">
+      <div class="ic">🥈</div><div class="tx"><h3>실버(은)가 잘 어울려요</h3>
+      <p>쿨 계열 — 여름 또는 겨울</p></div></button>
+    <button id="toneSkip" style="width:100%; background:transparent; border:1px solid var(--line);
+      color:var(--sub); border-radius:12px; padding:12px; font-size:12.5px; font-weight:600;">
+      잘 모르겠어요 — 직접 넘겨보며 확인할게요</button>
+  </div>
+</div>
+
 <div class="loading" id="loading">
   <div class="spinner"></div>
   <p id="loadingText">사진에서 얼굴만 분리하는 중…</p>
@@ -454,6 +472,7 @@ const HAIR = {
    ========================================================================= */
 const state = {
   mode:"manual",   // "manual" | "auto"
+  autoLight:null,  // 자동 모드에서 측정한 밝기 결과
   seasonIdx:0, subIdx:0, colorIdx:0,
   saved:[], // {hex,tone,season,seasonKey,desc,memo}
 };
@@ -666,6 +685,7 @@ $("fileInput").addEventListener("change", async e=>{
   // 1) 원본을 먼저 즉시 표시 → 선택은 항상 진행됨
   faceImg.src=img.src;
   $("autoRec").style.display="none";   // 배너 초기화
+  $("toneQ").style.display="none";     // 질문창 초기화
   $("uploadScreen").style.display="none";
   $("diagScreen").style.display="flex";
   renderAll();
@@ -679,13 +699,13 @@ $("fileInput").addEventListener("change", async e=>{
     faceImg.src=res.url;
     $("procBadge").textContent="✓ 완료";
     setTimeout(()=>{ $("procBadge").style.display="none"; }, 1800);
-    if(state.mode==="auto") applyAutoRec(res.rec);
+    if(state.mode==="auto") startAutoTone(res.light);
   }catch(err){
     console.error("processing skipped:", err);
     // 원본 그대로 사용 (이미 표시되어 있음)
     $("procBadge").textContent="원본 사진 사용 중";
     setTimeout(()=>{ $("procBadge").style.display="none"; }, 2500);
-    if(state.mode==="auto") applyAutoRec(null);
+    if(state.mode==="auto") startAutoTone(null);
   }
 });
 
@@ -734,6 +754,9 @@ async function processFace(img){
   const W=img.naturalWidth, H=img.naturalHeight;
   const src=document.createElement("canvas"); src.width=W; src.height=H;
   const sctx=src.getContext("2d"); sctx.drawImage(img,0,0);
+
+  // 화이트밸런스: 배경제거 전(흰 배경·옷이 남아있을 때) 중립 기준점 계산
+  const wb = computeWB(sctx, W, H);
 
   // 1) 얼굴 먼저 검출 (사람 기준점 + 크롭 영역에 사용)
   const det=detector.detect(img);
@@ -786,23 +809,24 @@ async function processFace(img){
     crop={x:0,y:0,w:W,h:H};
   }
 
-  // 4) 피부색 분석 → 계절 추천 (자동 진단용, ⚠️ 추정치)
-  const rec = analyzeSeason(sctx, W, H, f);
+  // 4) 밝기(라이트/딥)만 자동 측정 — 웜/쿨은 골드/실버 질문으로 결정 (하이브리드)
+  const light = analyzeLightness(sctx, W, H, f, wb);
 
   // 5) 크롭 결과 캔버스
   const out=document.createElement("canvas");
   out.width=crop.w; out.height=crop.h;
   const octx=out.getContext("2d");
   octx.drawImage(src, crop.x,crop.y,crop.w,crop.h, 0,0,crop.w,crop.h);
-  return { url: out.toDataURL("image/png"), rec };
+  return { url: out.toDataURL("image/png"), light };
 }
 
 /* =========================================================================
-   8-b) 피부색 자동 분석 → 계절 추천  ⚠️ 휴리스틱(경험칙) · 추정치
-   사진 조명/화이트밸런스에 좌우되므로 "시작점"으로만 사용. 직접 확인 필수.
+   8-b) 하이브리드 자동 진단
+   · 밝기(라이트/딥)는 사진에서 측정 (ITA, 화이트밸런스 보정) — 비교적 신뢰도 있음
+   · 웜/쿨은 사진색으로 신뢰 불가(쿨 피부도 hue~60°). → 골드/실버 질문으로 결정
+   실측 근거: 쿨톤 표본 L*≈65, b*≈14, hue≈60 → 웜과 구분 불가 확인됨.
    ========================================================================= */
-const WARM_HUE_THRESHOLD = 50;   // Lab hue각(°). 이상이면 웜 경향 (휴리스틱)
-const LIGHT_L_THRESHOLD  = 66;   // Lab L*. 이상이면 밝은(라이트) 경향 (휴리스틱)
+const LIGHT_ITA_THRESHOLD = 41;  // ITA° 이상이면 밝은(라이트) 경향. 피부과 light/intermediate 경계 참고
 
 function rgb2lab(r,g,b){
   r/=255; g/=255; b/=255;
@@ -817,26 +841,42 @@ function rgb2lab(r,g,b){
   return { L:116*y-16, a:500*(x-y), b:200*(y-z) };
 }
 
-function sampleSkin(ctx, W, H, faceBox){
-  // 볼 부근(얼굴 중앙~아래)에서 피부 픽셀 표본 추출
+// 흰 배경/옷 등 중립 영역으로 조명 색 왜곡(캐스트) 제거용 스케일 산출
+function computeWB(ctx, W, H){
+  const d=ctx.getImageData(0,0,W,H).data;
+  let sr=0,sg=0,sb=0,n=0;
+  for(let i=0;i<d.length;i+=4*7){   // stride 표본
+    const r=d[i],g=d[i+1],b=d[i+2];
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+    const v=mx/255, sat=mx===0?0:(mx-mn)/mx;
+    if(v>0.85 && sat<0.12){ sr+=r; sg+=g; sb+=b; n++; }   // 거의 흰색
+  }
+  if(n<50) return {r:1,g:1,b:1};
+  const ar=sr/n, ag=sg/n, ab=sb/n, mean=(ar+ag+ab)/3;
+  return { r:mean/ar, g:mean/ag, b:mean/ab };   // 흰 기준을 중립으로 맞추는 채널 스케일
+}
+
+function sampleSkin(ctx, W, H, faceBox, wb){
+  wb=wb||{r:1,g:1,b:1};
   let rx, ry, rw, rh;
-  if(faceBox){
-    rx=faceBox.originX+faceBox.width*0.20; rw=faceBox.width*0.60;
-    ry=faceBox.originY+faceBox.height*0.45; rh=faceBox.height*0.40;
+  if(faceBox){   // 볼 위쪽(눈 아래~입 위) — 그림자·입술·턱 제외
+    rx=faceBox.originX+faceBox.width*0.15; rw=faceBox.width*0.70;
+    ry=faceBox.originY+faceBox.height*0.40; rh=faceBox.height*0.25;
   }else{
-    rx=W*0.35; rw=W*0.30; ry=H*0.35; rh=H*0.30;
+    rx=W*0.35; rw=W*0.30; ry=H*0.38; rh=H*0.14;
   }
   rx=Math.max(0,rx|0); ry=Math.max(0,ry|0);
   rw=Math.min(W-rx,Math.max(1,rw|0)); rh=Math.min(H-ry,Math.max(1,rh|0));
   const d=ctx.getImageData(rx,ry,rw,rh).data;
   let rs=0,gs=0,bs=0,n=0;
   for(let i=0;i<d.length;i+=4){
-    const r=d[i],g=d[i+1],b=d[i+2],a=d[i+3];
-    if(a<200) continue;                 // 투명(배경) 제외
+    let r=d[i],g=d[i+1],b=d[i+2]; const a=d[i+3];
+    if(a<200) continue;
+    r=Math.min(255,r*wb.r); g=Math.min(255,g*wb.g); b=Math.min(255,b*wb.b);
     const max=Math.max(r,g,b), min=Math.min(r,g,b);
     const v=max/255, sat=max===0?0:(max-min)/max;
-    if(v<0.20||v>0.98) continue;        // 너무 어둡/밝은 곳(눈·하이라이트) 제외
-    if(sat>0.60) continue;              // 입술 등 고채도 제외
+    if(v<0.35||v>0.97) continue;        // 어두운 그림자·하이라이트 제외
+    if(sat>0.55) continue;              // 입술 등 고채도 제외
     if(!(r>=g && g>=b)) continue;       // 전형적 피부 RGB 순서
     rs+=r; gs+=g; bs+=b; n++;
   }
@@ -844,29 +884,38 @@ function sampleSkin(ctx, W, H, faceBox){
   return { r:rs/n, g:gs/n, b:bs/n, count:n };
 }
 
-function analyzeSeason(ctx, W, H, faceBox){
-  const skin=sampleSkin(ctx,W,H,faceBox);
+// 밝기만 측정 (ITA 기반)
+function analyzeLightness(ctx, W, H, faceBox, wb){
+  const skin=sampleSkin(ctx,W,H,faceBox,wb);
   if(!skin) return null;
   const lab=rgb2lab(skin.r,skin.g,skin.b);
-  const hue=Math.atan2(lab.b, lab.a)*180/Math.PI;  // 피부 ~ 40~70°
-  const warm = hue >= WARM_HUE_THRESHOLD;
-  const light = lab.L >= LIGHT_L_THRESHOLD;
-  const seasonKey = warm ? (light?"spring":"autumn") : (light?"summer":"winter");
-  return { seasonKey, warm, light, L:Math.round(lab.L), hue:Math.round(hue) };
+  const ita=Math.atan2(lab.L-50, lab.b)*180/Math.PI;
+  return { isLight: ita>=LIGHT_ITA_THRESHOLD, ITA:Math.round(ita), L:Math.round(lab.L) };
 }
 
-function applyAutoRec(rec){
-  const banner=$("autoRec");
-  banner.style.display="block";
-  if(!rec){
-    banner.innerHTML="🤖 자동 분석에 실패했어요(얼굴·피부 인식 부족). 직접 색을 넘겨보며 확인해 주세요.";
+/* 사진 처리 후(자동 모드) → 골드/실버 질문 띄우기 */
+function startAutoTone(light){
+  state.autoLight = light;   // {isLight,ITA,L} | null
+  $("toneQ").style.display="flex";
+}
+
+/* 골드/실버 답 + 측정 밝기 → 계절 추천 */
+function decideAuto(warm){
+  $("toneQ").style.display="none";
+  const banner=$("autoRec"); banner.style.display="block";
+  const lt=state.autoLight;
+  if(warm===null){
+    const m = lt ? (lt.isLight?"밝은(라이트) 편":"어두운(딥) 편") : "측정 실패";
+    banner.innerHTML=`🤖 밝기: ${m}. 웜/쿨은 직접 넘겨보며 확인하세요 ⚠️`;
     return;
   }
-  const season=SEASONS.find(s=>s.key===rec.seasonKey);
-  state.seasonIdx=SEASONS.indexOf(season); state.subIdx=0; state.colorIdx=0;
-  renderAll();
+  const isLight = lt ? lt.isLight : true;
+  const seasonKey = warm ? (isLight?"spring":"autumn") : (isLight?"summer":"winter");
+  const season=SEASONS.find(s=>s.key===seasonKey);
+  state.seasonIdx=SEASONS.indexOf(season); state.subIdx=0; state.colorIdx=0; renderAll();
+  const ltTxt = lt ? `밝기 ${lt.isLight?"라이트":"딥"}(ITA ${lt.ITA})` : "밝기 측정실패→라이트 가정";
   banner.innerHTML=`🤖 자동 추천 <b>${season.label}</b> `+
-    `<span class="est">— 추정치예요. 직접 넘겨보며 확인하세요 ⚠️</span>`;
+    `<span class="est">— ${warm?"골드":"실버"} 선택 · ${ltTxt} 기준. 추정치이니 직접 넘겨보며 확인하세요 ⚠️</span>`;
 }
 
 /* =========================================================================
@@ -926,6 +975,9 @@ function showScreen(id){
 $("startBtn").onclick=()=>showScreen("modeScreen");
 $("modeManual").onclick=()=>{ state.mode="manual"; showScreen("uploadScreen"); };
 $("modeAuto").onclick=()=>{ state.mode="auto"; showScreen("uploadScreen"); };
+$("goldBtn").onclick=()=>decideAuto(true);
+$("silverBtn").onclick=()=>decideAuto(false);
+$("toneSkip").onclick=()=>decideAuto(null);
 $("toGuideBtn").onclick=()=>{ $("guideModal").style.display="flex"; };
 $("guideClose").onclick=()=>{ $("guideModal").style.display="none"; };
 $("guideModal").addEventListener("click",e=>{ if(e.target.id==="guideModal") $("guideModal").style.display="none"; });
