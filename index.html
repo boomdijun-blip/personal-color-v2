@@ -152,6 +152,22 @@
   .modal .sheet .x{float:right; background:var(--panel); border:1px solid var(--line); color:var(--txt);
     width:34px; height:34px; border-radius:50%; font-size:15px;}
 
+  /* ---------- 진단 방식 선택 ---------- */
+  #modeScreen{display:none;}
+  .mode-card{display:flex; align-items:center; gap:14px; text-align:left; width:100%;
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:18px 16px; margin-bottom:12px; color:var(--txt);}
+  .mode-card:active{transform:scale(.99);}
+  .mode-card .ic{font-size:30px; flex:0 0 auto;}
+  .mode-card .tx h3{margin:0 0 5px; font-size:16px;}
+  .mode-card .tx p{margin:0; font-size:12.5px; color:var(--sub); line-height:1.6;}
+  .est{color:#e8c07d;}
+  .auto-rec{margin:10px 14px 0; background:rgba(124,124,255,.12);
+    border:1px solid rgba(124,124,255,.4); border-radius:12px; padding:11px 13px;
+    font-size:13px; line-height:1.55; color:var(--txt);}
+  .auto-rec b{font-size:14px;}
+  .auto-rec .est{font-size:11.5px;}
+
   /* 로딩 */
   .loading{position:fixed; inset:0; background:rgba(14,14,16,.92); display:none;
     flex-direction:column; align-items:center; justify-content:center; gap:18px; z-index:100;}
@@ -172,6 +188,24 @@
   <div class="screen" id="introScreen">
     <div class="guide" id="introGuide"></div>
     <button class="btn block" id="startBtn" style="margin-top:20px;">진단하러 가기 →</button>
+  </div>
+
+  <!-- 0-b. 진단 방식 선택 -->
+  <div class="screen" id="modeScreen">
+    <h2 style="font-size:21px; margin:6px 0 4px;">진단 방식을 선택하세요</h2>
+    <p style="color:var(--sub); font-size:13px; line-height:1.6; margin:0 0 18px;">
+      어느 쪽이든 다음 단계에서 얼굴 사진을 올리게 됩니다.</p>
+    <button class="mode-card" id="modeManual">
+      <div class="ic">🎨</div>
+      <div class="tx"><h3>직접 진단하기</h3>
+        <p>색을 하나씩 넘겨보며 어울리는 색을 직접 고릅니다. (드레이프 방식에 가장 가까움)</p></div>
+    </button>
+    <button class="mode-card" id="modeAuto">
+      <div class="ic">🤖</div>
+      <div class="tx"><h3>자동 진단하기</h3>
+        <p>사진의 피부색을 분석해 어울리는 계절을 <b>먼저 추천</b>합니다. 이후 직접 넘겨보며 확인.
+        <span class="est">⚠️ 추정치이며 사진 조명에 영향받습니다.</span></p></div>
+    </button>
   </div>
 
   <!-- 1. 업로드 -->
@@ -195,6 +229,7 @@
       <button id="toGuideBtn">❔ 진단법</button>
       <button id="toIntroBtn">✕ 처음으로</button>
     </div>
+    <div class="auto-rec" id="autoRec" style="display:none;"></div>
     <div class="stage" id="stage">
       <button class="nav-arrow left" id="prevColor">‹</button>
       <div class="tone-badge" id="toneBadge">봄 · 라이트</div>
@@ -418,6 +453,7 @@ const HAIR = {
    3) 상태
    ========================================================================= */
 const state = {
+  mode:"manual",   // "manual" | "auto"
   seasonIdx:0, subIdx:0, colorIdx:0,
   saved:[], // {hex,tone,season,seasonKey,desc,memo}
 };
@@ -629,24 +665,27 @@ $("fileInput").addEventListener("change", async e=>{
   }
   // 1) 원본을 먼저 즉시 표시 → 선택은 항상 진행됨
   faceImg.src=img.src;
+  $("autoRec").style.display="none";   // 배너 초기화
   $("uploadScreen").style.display="none";
   $("diagScreen").style.display="flex";
   renderAll();
 
-  // 2) 배경 제거 + 얼굴 크롭은 뒤에서 비동기로 시도 (멈추지 않도록 시간초과 포함)
+  // 2) 배경 제거 + 얼굴 크롭 + (자동모드면) 피부 분석을 뒤에서 비동기로 시도
   $("procBadge").style.display="inline-block";
-  $("procBadge").textContent="✨ 배경 정리 중…";
+  $("procBadge").textContent = state.mode==="auto" ? "✨ 분석 중…" : "✨ 배경 정리 중…";
   try{
-    const url=await withTimeout(processFace(img), 20000);
-    faceDataUrl=url;
-    faceImg.src=url;
-    $("procBadge").textContent="✓ 배경 제거됨";
+    const res=await withTimeout(processFace(img), 20000);
+    faceDataUrl=res.url;
+    faceImg.src=res.url;
+    $("procBadge").textContent="✓ 완료";
     setTimeout(()=>{ $("procBadge").style.display="none"; }, 1800);
+    if(state.mode==="auto") applyAutoRec(res.rec);
   }catch(err){
-    console.error("background removal skipped:", err);
+    console.error("processing skipped:", err);
     // 원본 그대로 사용 (이미 표시되어 있음)
     $("procBadge").textContent="원본 사진 사용 중";
     setTimeout(()=>{ $("procBadge").style.display="none"; }, 2500);
+    if(state.mode==="auto") applyAutoRec(null);
   }
 });
 
@@ -747,12 +786,87 @@ async function processFace(img){
     crop={x:0,y:0,w:W,h:H};
   }
 
-  // 3) 크롭 결과 캔버스
+  // 4) 피부색 분석 → 계절 추천 (자동 진단용, ⚠️ 추정치)
+  const rec = analyzeSeason(sctx, W, H, f);
+
+  // 5) 크롭 결과 캔버스
   const out=document.createElement("canvas");
   out.width=crop.w; out.height=crop.h;
   const octx=out.getContext("2d");
   octx.drawImage(src, crop.x,crop.y,crop.w,crop.h, 0,0,crop.w,crop.h);
-  return out.toDataURL("image/png");
+  return { url: out.toDataURL("image/png"), rec };
+}
+
+/* =========================================================================
+   8-b) 피부색 자동 분석 → 계절 추천  ⚠️ 휴리스틱(경험칙) · 추정치
+   사진 조명/화이트밸런스에 좌우되므로 "시작점"으로만 사용. 직접 확인 필수.
+   ========================================================================= */
+const WARM_HUE_THRESHOLD = 50;   // Lab hue각(°). 이상이면 웜 경향 (휴리스틱)
+const LIGHT_L_THRESHOLD  = 66;   // Lab L*. 이상이면 밝은(라이트) 경향 (휴리스틱)
+
+function rgb2lab(r,g,b){
+  r/=255; g/=255; b/=255;
+  r = r>0.04045 ? Math.pow((r+0.055)/1.055,2.4) : r/12.92;
+  g = g>0.04045 ? Math.pow((g+0.055)/1.055,2.4) : g/12.92;
+  b = b>0.04045 ? Math.pow((b+0.055)/1.055,2.4) : b/12.92;
+  let x=(r*0.4124+g*0.3576+b*0.1805)/0.95047;
+  let y=(r*0.2126+g*0.7152+b*0.0722);
+  let z=(r*0.0193+g*0.1192+b*0.9505)/1.08883;
+  const f=t=>t>0.008856 ? Math.cbrt(t) : (7.787*t+16/116);
+  x=f(x); y=f(y); z=f(z);
+  return { L:116*y-16, a:500*(x-y), b:200*(y-z) };
+}
+
+function sampleSkin(ctx, W, H, faceBox){
+  // 볼 부근(얼굴 중앙~아래)에서 피부 픽셀 표본 추출
+  let rx, ry, rw, rh;
+  if(faceBox){
+    rx=faceBox.originX+faceBox.width*0.20; rw=faceBox.width*0.60;
+    ry=faceBox.originY+faceBox.height*0.45; rh=faceBox.height*0.40;
+  }else{
+    rx=W*0.35; rw=W*0.30; ry=H*0.35; rh=H*0.30;
+  }
+  rx=Math.max(0,rx|0); ry=Math.max(0,ry|0);
+  rw=Math.min(W-rx,Math.max(1,rw|0)); rh=Math.min(H-ry,Math.max(1,rh|0));
+  const d=ctx.getImageData(rx,ry,rw,rh).data;
+  let rs=0,gs=0,bs=0,n=0;
+  for(let i=0;i<d.length;i+=4){
+    const r=d[i],g=d[i+1],b=d[i+2],a=d[i+3];
+    if(a<200) continue;                 // 투명(배경) 제외
+    const max=Math.max(r,g,b), min=Math.min(r,g,b);
+    const v=max/255, sat=max===0?0:(max-min)/max;
+    if(v<0.20||v>0.98) continue;        // 너무 어둡/밝은 곳(눈·하이라이트) 제외
+    if(sat>0.60) continue;              // 입술 등 고채도 제외
+    if(!(r>=g && g>=b)) continue;       // 전형적 피부 RGB 순서
+    rs+=r; gs+=g; bs+=b; n++;
+  }
+  if(n<30) return null;
+  return { r:rs/n, g:gs/n, b:bs/n, count:n };
+}
+
+function analyzeSeason(ctx, W, H, faceBox){
+  const skin=sampleSkin(ctx,W,H,faceBox);
+  if(!skin) return null;
+  const lab=rgb2lab(skin.r,skin.g,skin.b);
+  const hue=Math.atan2(lab.b, lab.a)*180/Math.PI;  // 피부 ~ 40~70°
+  const warm = hue >= WARM_HUE_THRESHOLD;
+  const light = lab.L >= LIGHT_L_THRESHOLD;
+  const seasonKey = warm ? (light?"spring":"autumn") : (light?"summer":"winter");
+  return { seasonKey, warm, light, L:Math.round(lab.L), hue:Math.round(hue) };
+}
+
+function applyAutoRec(rec){
+  const banner=$("autoRec");
+  banner.style.display="block";
+  if(!rec){
+    banner.innerHTML="🤖 자동 분석에 실패했어요(얼굴·피부 인식 부족). 직접 색을 넘겨보며 확인해 주세요.";
+    return;
+  }
+  const season=SEASONS.find(s=>s.key===rec.seasonKey);
+  state.seasonIdx=SEASONS.indexOf(season); state.subIdx=0; state.colorIdx=0;
+  renderAll();
+  banner.innerHTML=`🤖 자동 추천 <b>${season.label}</b> `+
+    `<span class="est">— 추정치예요. 직접 넘겨보며 확인하세요 ⚠️</span>`;
 }
 
 /* =========================================================================
@@ -803,13 +917,15 @@ $("introGuide").innerHTML=GUIDE_HTML;
 $("modalGuide").innerHTML=GUIDE_HTML;
 
 function showScreen(id){
-  ["introScreen","uploadScreen","diagScreen","resultScreen"].forEach(s=>{
+  ["introScreen","modeScreen","uploadScreen","diagScreen","resultScreen"].forEach(s=>{
     $(s).style.display = (s===id) ? "flex" : "none";
   });
   window.scrollTo(0,0);
 }
 
-$("startBtn").onclick=()=>showScreen("uploadScreen");
+$("startBtn").onclick=()=>showScreen("modeScreen");
+$("modeManual").onclick=()=>{ state.mode="manual"; showScreen("uploadScreen"); };
+$("modeAuto").onclick=()=>{ state.mode="auto"; showScreen("uploadScreen"); };
 $("toGuideBtn").onclick=()=>{ $("guideModal").style.display="flex"; };
 $("guideClose").onclick=()=>{ $("guideModal").style.display="none"; };
 $("guideModal").addEventListener("click",e=>{ if(e.target.id==="guideModal") $("guideModal").style.display="none"; });
