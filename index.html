@@ -912,7 +912,11 @@ function decideAuto(warm){
   const isLight = lt ? lt.isLight : true;
   const seasonKey = warm ? (isLight?"spring":"autumn") : (isLight?"summer":"winter");
   const season=SEASONS.find(s=>s.key===seasonKey);
-  state.seasonIdx=SEASONS.indexOf(season); state.subIdx=0; state.colorIdx=0; renderAll();
+  // 밝기에 맞는 서브톤으로 바로 이동 (딥이면 '딥' 톤, 라이트면 '라이트' 톤)
+  let subIdx=0;   // 우선순위 순서로 서브톤 탐색 (딥이면 '딥' 먼저)
+  const want = isLight ? ["라이트","브라이트","페일"] : ["딥","다크","스트롱","뮤트"];
+  for(const w of want){ const i=season.subtones.findIndex(st=>st.name===w); if(i>=0){ subIdx=i; break; } }
+  state.seasonIdx=SEASONS.indexOf(season); state.subIdx=subIdx; state.colorIdx=0; renderAll();
   const ltTxt = lt ? `밝기 ${lt.isLight?"라이트":"딥"}(ITA ${lt.ITA})` : "밝기 측정실패→라이트 가정";
   banner.innerHTML=`🤖 자동 추천 <b>${season.label}</b> `+
     `<span class="est">— ${warm?"골드":"실버"} 선택 · ${ltTxt} 기준. 추정치이니 직접 넘겨보며 확인하세요 ⚠️</span>`;
