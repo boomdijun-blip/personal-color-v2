@@ -169,7 +169,16 @@
   .auto-rec .est{font-size:11.5px;}
 
   /* ---------- 사용법 데모(애니메이션) ---------- */
-  .demo{margin:2px 0 22px; text-align:center;}
+  .demo{margin:2px 0 22px; text-align:center; position:relative;}
+  .demo-cursor{position:absolute; left:0; top:0; width:22px; height:22px; z-index:8;
+    opacity:0; pointer-events:none; transition:opacity .2s;}
+  .demo-ripple{position:absolute; left:0; top:0; width:16px; height:16px; border-radius:50%;
+    border:2.5px solid #ff5e8a; opacity:0; z-index:7; pointer-events:none;
+    transform:translate(-50%,-50%) scale(.4);}
+  .demo-ripple.go{animation:demoRip .55s ease-out;}
+  @keyframes demoRip{
+    0%{opacity:.9; transform:translate(-50%,-50%) scale(.4);}
+    100%{opacity:0; transform:translate(-50%,-50%) scale(2.6);}}
   .demo-screen{position:relative; width:226px; height:272px; margin:0 auto;
     border-radius:20px; overflow:hidden; transition:background-color .28s ease;
     display:flex; align-items:flex-end; justify-content:center; box-shadow:var(--shadow);
@@ -252,6 +261,11 @@
       <div class="demo-pill" id="demoPill">🤍 잘 어울려요</div>
       <p class="demo-cap" id="demoCap">색을 <b>좌우로 넘기며</b> 어울리는 색에 <b>‘잘 어울려요’</b>를 눌러요</p>
       <span class="demo-tag">⬆︎ 실제 사용 예시 (자동 재생)</span>
+      <span class="demo-ripple" id="demoRipple"></span>
+      <svg class="demo-cursor" id="demoCursor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M3 2 L3 20.5 L8 15.5 L11.4 22.5 L14.2 21.2 L10.8 14.5 L17.5 14.5 Z"
+          fill="#ffffff" stroke="#111111" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
     </div>
     <div class="guide" id="introGuide"></div>
     <button class="btn block" id="startBtn" style="margin-top:20px;">진단하러 가기 →</button>
@@ -1072,33 +1086,60 @@ const DEMOSEQ=[
   {hex:"#7A4B2B", label:"가을 웜 · 딥"}
 ];
 let demoTimers=[];
+// 가짜 커서를 버튼으로 이동시키고 클릭 물결을 띄움
+function demoClickAt(el){
+  const cur=$("demoCursor"), r=$("demoRipple"), stage=$("demoStage");
+  const sx=stage.offsetLeft+stage.offsetWidth/2, sy=stage.offsetTop+stage.offsetHeight*0.82;
+  cur.style.transition="none";
+  cur.style.transform=`translate(${sx-3}px,${sy-2}px)`;   // 화면 안쪽에서 출발
+  cur.style.opacity="1";
+  void cur.offsetWidth;                                    // reflow
+  cur.style.transition="transform .34s cubic-bezier(.4,0,.2,1)";
+  const tx=el.offsetLeft+el.offsetWidth/2, ty=el.offsetTop+el.offsetHeight/2;
+  cur.style.transform=`translate(${tx-3}px,${ty-2}px)`;    // 버튼으로 이동
+  demoTimers.push(setTimeout(()=>{                          // 도착 후 물결
+    r.style.left=tx+"px"; r.style.top=ty+"px";
+    r.classList.remove("go"); void r.offsetWidth; r.classList.add("go");
+  }, 340));
+}
 function playDemo(){
   demoTimers.forEach(clearTimeout); demoTimers=[];
-  const stage=$("demoStage"), badge=$("demoBadge"), pill=$("demoPill"),
-        cap=$("demoCap"), result=$("demoResult"), hand=$("demoHand");
+  const stage=$("demoStage"), badge=$("demoBadge"), pill=$("demoPill"), cap=$("demoCap"),
+        result=$("demoResult"), hand=$("demoHand"), cur=$("demoCursor");
   const at=(ms,fn)=>demoTimers.push(setTimeout(fn,ms));
   let t=0;
   DEMOSEQ.forEach(d=>{
+    const dur = d.save ? 1100 : 480;   // 클릭 장면은 길게 보여줌
     at(t,()=>{
-      result.style.display="none"; hand.style.display="block"; badge.style.display="block";
-      pill.style.display="inline-flex";
+      result.style.display="none"; badge.style.display="block"; pill.style.display="inline-flex";
       stage.style.backgroundColor=d.hex; badge.textContent=d.label;
-      if(d.save){ pill.classList.add("on"); pill.innerHTML="💚 저장됨"; }
-      else{ pill.classList.remove("on"); pill.innerHTML="🤍 잘 어울려요"; }
+      pill.classList.remove("on"); pill.innerHTML="🤍 잘 어울려요";
       cap.innerHTML="색을 <b>좌우로 넘기며</b> 어울리는 색에 <b>‘잘 어울려요’</b>를 눌러요";
+      if(d.save){ hand.style.display="none"; demoClickAt(pill); }   // 커서가 버튼으로 이동
+      else{ hand.style.display="block"; cur.style.opacity="0"; }
     });
-    t+=500;
+    if(d.save){
+      at(t+430,()=>{ pill.classList.add("on"); pill.innerHTML="💚 저장됨"; });  // 눌린 효과
+      at(t+1000,()=>{ cur.style.opacity="0"; });
+    }
+    t+=dur;
   });
-  at(t,()=>{   // 진단 완료 누르기
-    hand.style.display="none"; pill.style.display="inline-flex";
-    pill.classList.add("on"); pill.innerHTML="✅ 진단 완료!";
+  // 진단 완료 누르기 — 커서가 버튼으로 이동
+  at(t,()=>{
+    hand.style.display="none";
+    pill.style.display="inline-flex"; pill.classList.remove("on"); pill.innerHTML="진단 완료";
     cap.innerHTML="다 넘긴 뒤 <b>진단 완료</b>를 누르면…";
-  }); t+=1100;
-  at(t,()=>{   // 결과 페이지
-    badge.style.display="none"; pill.style.display="none";
+    demoClickAt(pill);
+  });
+  at(t+430,()=>{ pill.classList.add("on"); pill.innerHTML="✅ 진단 완료!"; });
+  t+=1400;
+  // 결과 페이지
+  at(t,()=>{
+    cur.style.opacity="0"; hand.style.display="none"; badge.style.display="none"; pill.style.display="none";
     stage.style.backgroundColor="#15151a"; result.style.display="flex";
     cap.innerHTML="<b>어울리는 계절·색·헤어</b> 추천이 나와요!";
-  }); t+=2800;
+  });
+  t+=2600;
   at(t, playDemo);   // 반복
 }
 playDemo();
