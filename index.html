@@ -171,21 +171,32 @@
   /* ---------- 사용법 데모(애니메이션) ---------- */
   .demo{margin:2px 0 22px; text-align:center;}
   .demo-screen{position:relative; width:226px; height:272px; margin:0 auto;
-    border-radius:20px; overflow:hidden; transition:background-color .55s ease;
+    border-radius:20px; overflow:hidden; transition:background-color .28s ease;
     display:flex; align-items:flex-end; justify-content:center; box-shadow:var(--shadow);
     background:#FF9E6D;}
   .demo-badge{position:absolute; top:12px; left:50%; transform:translateX(-50%);
     background:rgba(0,0,0,.40); backdrop-filter:blur(4px); color:#fff; font-size:11.5px;
     font-weight:700; padding:5px 12px; border-radius:999px; white-space:nowrap; z-index:3;}
   .demo-face{width:150px; height:auto; filter:drop-shadow(0 8px 18px rgba(0,0,0,.28)); z-index:2;}
-  .demo-hand{position:absolute; top:46%; left:50%; font-size:30px; z-index:4; pointer-events:none;
-    animation:demoSwipe 2.6s ease-in-out infinite;}
+  .demo-hand{position:absolute; top:58%; left:50%; font-size:30px; z-index:4; pointer-events:none;
+    animation:demoSwipe 1s ease-in-out infinite;}
   @keyframes demoSwipe{
-    0%{transform:translate(28px,0); opacity:0;}
-    18%{opacity:1;}
-    50%{transform:translate(-32px,0); opacity:1;}
-    72%{opacity:0;} 100%{opacity:0;}
+    0%{transform:translate(30px,0); opacity:0;}
+    20%{opacity:1;}
+    50%{transform:translate(-34px,0); opacity:1;}
+    75%{opacity:0;} 100%{opacity:0;}
   }
+  /* 데모 결과 페이지(오버레이) */
+  .demo-result{position:absolute; inset:0; z-index:5; display:none; flex-direction:column;
+    align-items:center; justify-content:center; gap:7px; background:#15151a; padding:16px; text-align:center;}
+  .dr-top{font-size:11px; color:var(--sub);}
+  .dr-season{font-size:23px; font-weight:900; background:#C3AECF; color:#1a1a1a;
+    padding:3px 14px; border-radius:10px;}
+  .dr-chips{display:flex; gap:6px; margin-top:4px;}
+  .dr-chips i{width:22px; height:22px; border-radius:50%; display:block;}
+  .dr-h{font-size:11px; color:var(--sub); margin-top:10px;}
+  .dr-hair{display:flex; gap:6px;}
+  .dr-hair span{width:32px; height:40px; border-radius:8px; display:block;}
   .demo-pill{display:inline-flex; align-items:center; gap:6px; margin-top:14px;
     background:var(--panel); border:1px solid var(--line); color:var(--txt);
     padding:10px 18px; border-radius:999px; font-size:13px; font-weight:700; transition:all .3s;}
@@ -226,11 +237,21 @@
           <path d="M52 74 Q60 80 68 74" stroke="#b97f6b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
         </svg>
         <div class="demo-hand" id="demoHand">👆</div>
+        <div class="demo-result" id="demoResult">
+          <div class="dr-top">당신에게 잘 어울린 계열</div>
+          <div class="dr-season">여름 쿨</div>
+          <div class="dr-chips">
+            <i style="background:#FBC4D4"></i><i style="background:#A9C0D6"></i><i style="background:#C3AECF"></i>
+          </div>
+          <div class="dr-h">추천 헤어스타일</div>
+          <div class="dr-hair">
+            <span style="background:#8A7A86"></span><span style="background:#6E6A78"></span><span style="background:#7C6E66"></span>
+          </div>
+        </div>
       </div>
       <div class="demo-pill" id="demoPill">🤍 잘 어울려요</div>
-      <p class="demo-cap">색을 <b>좌우로 넘기며</b> 얼굴이 화사해 보이는 색을 찾고,<br/>
-        마음에 들면 <b>‘잘 어울려요’</b>를 눌러 저장하면 돼요.</p>
-      <span class="demo-tag">⬆︎ 실제 화면 예시 (자동 재생)</span>
+      <p class="demo-cap" id="demoCap">색을 <b>좌우로 넘기며</b> 어울리는 색에 <b>‘잘 어울려요’</b>를 눌러요</p>
+      <span class="demo-tag">⬆︎ 실제 사용 예시 (자동 재생)</span>
     </div>
     <div class="guide" id="introGuide"></div>
     <button class="btn block" id="startBtn" style="margin-top:20px;">진단하러 가기 →</button>
@@ -1037,24 +1058,50 @@ $("toIntroBtn").onclick=()=>{ showScreen("introScreen"); };
 /* =========================================================================
    10) 사용법 데모 애니메이션 (안내 페이지 자동 재생)
    ========================================================================= */
-const DEMO=[
-  {hex:"#FF9E6D", label:"봄 웜 · 브라이트", saved:false},
-  {hex:"#FBC4D4", label:"여름 쿨 · 라이트", saved:true},
-  {hex:"#C9A14A", label:"가을 웜 · 뮤트", saved:false},
-  {hex:"#1F2D5A", label:"겨울 쿨 · 딥", saved:false},
-  {hex:"#A8D672", label:"봄 웜 · 라이트", saved:true}
+// 10장(각 0.5초=5초) → 진단완료 → 결과페이지 → 반복.  2·5번째에서 '잘 어울려요'.
+const DEMOSEQ=[
+  {hex:"#FF9E6D", label:"봄 웜 · 브라이트"},
+  {hex:"#FBC4D4", label:"여름 쿨 · 라이트", save:true},   // 2번째
+  {hex:"#C9A14A", label:"가을 웜 · 뮤트"},
+  {hex:"#1F2D5A", label:"겨울 쿨 · 딥"},
+  {hex:"#A9C0D6", label:"여름 쿨 · 뮤트", save:true},      // 5번째
+  {hex:"#FFB347", label:"봄 웜 · 라이트"},
+  {hex:"#9E4A2E", label:"가을 웜 · 딥"},
+  {hex:"#E83E8C", label:"겨울 쿨 · 브라이트"},
+  {hex:"#C3AECF", label:"여름 쿨 · 뮤트"},
+  {hex:"#7A4B2B", label:"가을 웜 · 딥"}
 ];
-let demoIdx=0;
-function demoStep(){
-  const d=DEMO[demoIdx];
-  $("demoStage").style.backgroundColor=d.hex;
-  $("demoBadge").textContent=d.label;
-  if(d.saved){ $("demoPill").classList.add("on"); $("demoPill").innerHTML="💚 저장됨"; }
-  else{ $("demoPill").classList.remove("on"); $("demoPill").innerHTML="🤍 잘 어울려요"; }
-  demoIdx=(demoIdx+1)%DEMO.length;
+let demoTimers=[];
+function playDemo(){
+  demoTimers.forEach(clearTimeout); demoTimers=[];
+  const stage=$("demoStage"), badge=$("demoBadge"), pill=$("demoPill"),
+        cap=$("demoCap"), result=$("demoResult"), hand=$("demoHand");
+  const at=(ms,fn)=>demoTimers.push(setTimeout(fn,ms));
+  let t=0;
+  DEMOSEQ.forEach(d=>{
+    at(t,()=>{
+      result.style.display="none"; hand.style.display="block"; badge.style.display="block";
+      pill.style.display="inline-flex";
+      stage.style.backgroundColor=d.hex; badge.textContent=d.label;
+      if(d.save){ pill.classList.add("on"); pill.innerHTML="💚 저장됨"; }
+      else{ pill.classList.remove("on"); pill.innerHTML="🤍 잘 어울려요"; }
+      cap.innerHTML="색을 <b>좌우로 넘기며</b> 어울리는 색에 <b>‘잘 어울려요’</b>를 눌러요";
+    });
+    t+=500;
+  });
+  at(t,()=>{   // 진단 완료 누르기
+    hand.style.display="none"; pill.style.display="inline-flex";
+    pill.classList.add("on"); pill.innerHTML="✅ 진단 완료!";
+    cap.innerHTML="다 넘긴 뒤 <b>진단 완료</b>를 누르면…";
+  }); t+=1100;
+  at(t,()=>{   // 결과 페이지
+    badge.style.display="none"; pill.style.display="none";
+    stage.style.backgroundColor="#15151a"; result.style.display="flex";
+    cap.innerHTML="<b>어울리는 계절·색·헤어</b> 추천이 나와요!";
+  }); t+=2800;
+  at(t, playDemo);   // 반복
 }
-demoStep();
-setInterval(demoStep, 1700);
+playDemo();
 
 /* 초기 렌더 (탭 등) */
 renderTabs();
